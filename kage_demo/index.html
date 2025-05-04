@@ -1,0 +1,71 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>KAGE Auto Layout Demo</title>
+  <style>
+    body { background: mintcream; font-family: sans-serif; padding: 2em; }
+    canvas, svg { border: 1px solid #ccc; margin: 1em 0; display: block; }
+    textarea { width: 100%; height: 50px; font-size: 16px; }
+  </style>
+  <script src="/2d.js"></script>
+  <script src="/buhin.js"></script>
+  <script src="/curve.js"></script>
+  <script src="/kage.js"></script>
+  <script src="/kagecd.js"></script>
+  <script src="/kagedf.js"></script>
+  <script src="/polygon.js"></script>
+  <script src="/polygons.js"></script>
+</head>
+<body>
+  <h1>KAGE 自动偏旁压缩演示</h1>
+  <textarea id="ids">⿰u5973.u5b50</textarea>
+  <button onclick="render()">渲染</button>
+  <canvas id="canvas" width="200" height="200"></canvas>
+  <script type="module">
+    function idsToKage(ids) {
+      const [a, b] = ids.slice(1).split(".").map(x => x.trim().toLowerCase());
+      return `99:0:0:0:0:100:200:${a}$99:0:0:100:0:200:200:${b}`;
+    }
+
+    async function fetchKageData(name) {
+      const res = await fetch(`https://glyphwiki.org/api/glyph?name=${name}`);
+      const json = await res.json();
+      return json && json.data ? json.data.trim() : "";
+    }
+
+    async function render() {
+      const kage = new Kage(1);
+      kage.kShotai = kage.kMincho;
+      const polygons = new Polygons();
+
+      const ids = document.getElementById("ids").value.trim();
+      const kageData = idsToKage(ids);
+      const parts = [...new Set(kageData.match(/u[0-9a-f\-]+/gi))];
+      for (const part of parts) {
+        const data = await fetchKageData(part);
+        if (data) kage.kBuhin.push(part, data);
+      }
+
+      kage.kBuhin.push("custom", kageData);
+      kage.makeGlyph(polygons, "custom");
+
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "black";
+      for (const poly of polygons.array) {
+        ctx.beginPath();
+        ctx.moveTo(poly.array[0].x, poly.array[0].y);
+        for (let i = 1; i < poly.array.length; i++) {
+          ctx.lineTo(poly.array[i].x, poly.array[i].array[i].y);
+        }
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    window.render = render;
+  </script>
+</body>
+</html>

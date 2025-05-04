@@ -1,0 +1,252 @@
+<!doctype html>
+<html>
+
+<head>
+    <title>KAGE engine sample</title>
+    <style>
+        html {
+            background-color: mintcream;
+        }
+
+        #canvas,
+        #svg {
+            display: inline-block;
+            border: 1px #ccc solid;
+        }
+
+        svg {
+            display: block;
+        }
+
+        #data_area {
+            width: 30em;
+            height: 32em;
+        }
+    </style>
+    <script type="text/javascript" src="2d.js"></script>
+    <script type="text/javascript" src="buhin.js"></script>
+    <script type="text/javascript" src="curve.js"></script>
+    <script type="text/javascript" src="kage.js"></script>
+    <script type="text/javascript" src="kagecd.js"></script>
+    <script type="text/javascript" src="kagedf.js"></script>
+    <script type="text/javascript" src="polygon.js"></script>
+    <script type="text/javascript" src="polygons.js"></script>
+
+    <script type="module">
+
+async function fetchValidComponents(count = 4) {
+    const candidates = [];
+    const start = 0x4E00; // CJK统一汉字起始
+    const end = 0x9FA5;
+
+    while (candidates.length < count) {
+        const codepoint = Math.floor(Math.random() * (end - start)) + start;
+        const name = "u" + codepoint.toString(16);
+        const url = `https://glyphwiki.org/api/glyph?name=${name}-j`; // 记得是 -j 部件名
+        try {
+            const res = await fetch(url);
+            const json = await res.json();
+            const data = json?.data?.trim();
+            if (data && data.split("$").length === 1) { // 至少2条 stroke 或 composite
+                candidates.push(name + "-j");
+            }
+        } catch (e) {
+            console.log("么有");
+        }
+    }
+    return candidates;
+}
+
+        const structures = ["⿰", "⿱"];
+ 
+        let components = [];
+
+        async function init() {
+            components = await fetchValidComponents(4);
+            console.log("已加载部件：", components);
+        }
+
+        function generateRandomIDS() {
+            const struct = structures[Math.floor(Math.random() * structures.length)];
+
+            let partsNeeded = struct === "⿲" || struct === "⿳" ? 3 : 2;
+
+            let selected = [];
+            while (selected.length < partsNeeded) {
+                const rand = components[Math.floor(Math.random() * components.length)];
+                if (!selected.includes(rand)) {
+                    selected.push(rand);
+                }
+            }
+
+            return struct + selected.join(".");
+        }
+
+        Kage.prototype.makeGlyph = function (polygons, name) {
+            const glyphData = this.kBuhin.search(name);
+            const adjusted = this.adjustStrokes(this.getEachStrokes(glyphData));
+            for (let i = 0; i < adjusted.length; i++) {
+                dfDrawFont(this, polygons,
+                    adjusted[i][0],
+                    adjusted[i][1],
+                    adjusted[i][2],
+                    adjusted[i][3],
+                    adjusted[i][4],
+                    adjusted[i][5],
+                    adjusted[i][6],
+                    adjusted[i][7],
+                    adjusted[i][8],
+                    adjusted[i][9],
+                    adjusted[i][10]);
+            }
+        };
+
+        //import { Kage, Polygons } from "https://unpkg.com/@kurgm/kage-engine@0.6.0/dist/kage.min.mjs";
+
+        function idsToKageAutoLayout(ids) {
+            const idMap = {
+                "⿰": "LR", // 左右
+                "⿱": "TB", // 上下
+                "⿲": "LLR", // 左中右
+                "⿳": "TTB"  // 上中下
+            };
+
+            function recurse(expr) {
+                // 括号保护（用于嵌套）
+                if (!Object.keys(idMap).some(op => expr.includes(op))) {
+                    return expr.trim().toLowerCase();
+                }
+
+                const type = expr[0];
+                const parts = splitIds(expr.slice(1));
+
+                const children = parts.map(recurse); // 递归转换每个子部件
+                if (type === "⿰") {
+                    return `99:0:0:0:0:100:200:${children[0]}$99:0:0:100:0:200:200:${children[1]}`;
+                } else if (type === "⿱") {
+                    return `99:0:0:0:0:200:100:${children[0]}$99:0:0:0:100:200:200:${children[1]}`;
+                } else if (type === "⿲") {
+                    return `99:0:0:0:0:66:200:${children[0]}$99:0:0:66:0:133:200:${children[1]}$99:0:0:133:0:200:200:${children[2]}`;
+                } else if (type === "⿳") {
+                    return `99:0:0:0:0:200:66:${children[0]}$99:0:0:0:66:200:133:${children[1]}$99:0:0:0:133:200:200:${children[2]}`;
+                } else {
+                    throw new Error(`Unsupported IDS structure: ${type}`);
+                }
+            }
+
+            // 小工具：支持嵌套括号安全切割子结构
+            function splitIds(s) {
+                const result = [];
+                let depth = 0, current = "";
+                for (let i = 0; i < s.length; i++) {
+                    const ch = s[i];
+                    if (ch === "." && depth === 0) {
+                        result.push(current);
+                        current = "";
+                    } else {
+                        if (ch === "(") depth++;
+                        if (ch === ")") depth--;
+                        current += ch;
+                    }
+                }
+                if (current) result.push(current);
+                return result;
+            }
+
+            return recurse(ids);
+        }
+
+
+        async function expandGlyph(name, kage, depth = 0) {
+            if (kage.kBuhin.search[name]) return;
+
+            const res = await fetch(`https://glyphwiki.org/api/glyph?name=${name}`);
+            const json = await res.json();
+            if (!json || !json.data) {
+                console.warn(`⚠️ 部件 ${name} 不存在`);
+                return;
+            }
+
+            const data = json.data.trim();
+            const subComponents = extractComponents(data);
+
+            for (const comp of subComponents) {
+                await expandGlyph(comp, kage, depth + 1);
+            }
+
+            kage.kBuhin.push(name, data);
+        }
+
+
+        function extractComponents(glyphData) {
+            const lines = glyphData.split("$");
+            const componentNames = [];
+
+            for (const line of lines) {
+                const parts = line.split(":");
+                if (parts[0] === "99" && parts[7]) {
+                    const raw = parts[7].split(":")[0]; // 去掉后缀参数
+                    componentNames.push(raw);
+                }
+            }
+
+            return [...new Set(componentNames)];
+        }
+
+
+        async function updateGlyph() {
+            const kage = new Kage();
+            const polygons = new Polygons();
+            kage.kShotai = kage.kMincho;
+
+            const ids = document.getElementById("data_area").value.trim();
+            console.log("IDS 表达式：", ids);
+
+            const kageData = idsToKageAutoLayout(ids);
+            console.log("生成的结构式 KAGE data：", kageData);
+
+            const componentNames = extractComponents(kageData);
+            for (const name of componentNames) {
+                await expandGlyph(name, kage);
+            }
+
+            // ③ 注册一个临时 glyph 名（用 IDS 字符串也可以）
+            const glyphName = "custom-glyph";
+            kage.kBuhin.push(glyphName, kageData);
+
+            const glyphData = kage.kBuhin.search(glyphName);
+
+            kage.makeGlyph(polygons, glyphName);
+
+            document.getElementById("svg").innerHTML = polygons.generateSVG(false);
+        }
+
+
+        document.addEventListener("DOMContentLoaded", async () => {
+            await init();
+            const btn = document.getElementById("generateBtn");
+
+            btn.addEventListener("click", async () => {
+                components = await fetchValidComponents(2);
+                const ids = generateRandomIDS();
+                document.getElementById("data_area").value = ids;
+                updateGlyph();
+            });
+
+            btn.click();
+        });
+
+    </script>
+</head>
+
+<body>
+    <button id="generateBtn">new random character</button>
+    <div>
+        <div id="svg"></div>
+    </div>
+    <div>
+        <textarea id="data_area"></textarea>
+    </div>
+</body>
+
+</html>
